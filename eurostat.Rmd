@@ -1,59 +1,143 @@
 ---
-title: "Eurostat"
+title: "Análisis evolutivo de ratios sociodemográficos por países. Eurostat."
 output: html_notebook
 ---
-Pasos:
-1. Carga de datos y eliminación de columnas raras, sin datos.
-2. Eliminamos campo SEX de tabla Trabajo para poder unir las dos tablas
-3. Renombramos campo INDIC
-4. Unimos tablas con rbind en df
-5. Convertimos valores ":" en NA's
-6. Seleccionamos paises interesantes eu+otros
-7. Hacemos dos nuevas tablas (spread) a partir de df, una por paises y otra por INDIC
-#Led
+Autores: María Curto y José Luis Apellániz.
+Objetivo del proyecto: 
+Ver la relación entre políticas de gasto en educación y tasas de empleo/desempleo en los
+en la UE, por país y por año.
+Para ello vamos a crear, a partir de los indicadores aportados por Eurostat, nuevos kpi's que nos muestren dicha
+relación.
 
+
+#LED 
+Importamos librerias principales.
 ```{r}
+# Libraries, environment, directory.
 library(magrittr)
+library(ggplot2)
+```
+
+
+#Import Data 
+Importamos datos en formato csv.
+```{r}
 edu <- read.csv2("dat/edu.csv",sep="")
 trabajo <- read.csv2("dat/trabajo.csv",sep="")
+```
 
+
+#Clean/Prepare Data
+Limpieza y preparación de datos.
+```{r}
+# Vemos los indicadors de educación y trabajo respectivamente:
 tb.edu<-as.data.frame(table(edu$INDIC_ED))
 tb.tra<-as.data.frame(table(trabajo$INDIC_EM))
-
+# Arreglamos columnas eliminando las que han surgido con caracteres raros
 colnames(edu)
 edu<-edu[,-c(1,3,5,7,9)]
 colnames(trabajo)
 trabajo<-trabajo[,-c(1,3,5,7,9,11)]
-
+# Eliminamos la separación por sexos en la tabla de trabajo y nos quedamos con los valores referentes al total de los dos sexos.
 trabajo %<>% dplyr::filter(SEX=="Total") %>% 
   dplyr::select(c(1,2,4,5)) %>% 
   dplyr::rename(INDIC=INDIC_EM)
-
+# Renombramos el campo de indicadores para que sea el mismo nombre en las dos tablas: INDIC.
 edu %<>% dplyr::rename(INDIC=INDIC_ED)
-
 df <- rbind(edu,trabajo)
-
+# Hay muchos valores como ":" que deberían ser NA's. Los cambiamos:
 df$Value<-as.numeric(as.character(df$Value))
 df$Value[df$Value == ":"] <- NA
-
+# Vemos cantidad de NA's
+sum(!is.na(df$Value))
+# Summary y metadatos del campo Value
 summary(df$Value)
 str(df$Value)
 
-table(df$GEO)
+# Cambiamos los nombres largos de los kpi por nombres cortos
+tb.df<-as.data.frame(table(df$INDIC))
+levels(df$INDIC)
+kpi <- c("EX_1","EX_2","EX_3","PS_1","PS_2","GDP_1","GDP_2","GDP_3","GDP_4","GDP_5","TOT_1","TOT_2","AP","AR_15_24","AR_15_64","AR_20_64","AR_25_54","AR_55_64","GAP","P_15_64","TP","YUR_15_24")
+levels(df$INDIC) <- kpi
+
+# Nos quedamos con 4 kpi'S, 2 del área de educación y 2 del área de trabajo y creamos el DataFrame df.red:
+#GDP_5=>[10] "Total public expenditure on education as % of GDP, for all levels of education combined"
+#TOT_2=>[12] "Total public expenditure on education as % of total public expenditure, for all levels of education combined" 
+#AR_15_64=>[15] "Activity rate (15 to 64 years)"  
+#YUR_15_24=>[22] "Youth unemployment ratio 15-24"  
+criterio <- c("GDP_5","TOT_2","AR_15_64","YUR_15_24")
+df.red <- df %>% 
+  dplyr::filter(INDIC %in% criterio) %>% 
+  dplyr::filter(!is.na(Value))
+table(df.red$INDIC)
+sum(is.na(df.red$Value))
+
+# Ahora reordenamos la tabla df.red de dos maneras distintas:
+# 1. Expandiendo la variable GEO (países) en columnas
+# 2. Expandiendo la variable INDIC (indicadores) en columnas
+# y vemos cual se adapta mejor a nuestras necesidades:
+df_geo<-df.red %>% tidyr::spread(GEO, Value)
+df_indic<-df.red %>% tidyr::spread(INDIC, Value)
+
+# Creamos los kpi's nuevos a partir de los indicadores seleccionados:
+# pib_yur=GDP_5/YUR_15_24=> Gasto en educación sobre el PIB/Desempleo juvenil
+# tot_yur=TOT_2/YUR_15_24=> Gasto en educación sobre el total de gasto público/ Desempleo juvenil
+# gdp_ar=GDP_5/AR_15_64=> Gasto en educación sobre el PIB/Tasa de actividad(15-64)
+# tot_ar=TOT_2/AR_15_64=> Gasto en educación sobre el total de gasto público/Tasa de actividad(15-64
+
+df_indic %<>%
+  dplyr::mutate(pib_yur=GDP_5/YUR_15_24, tot_yur=TOT_2/YUR_15_24,gdp_ar=GDP_5/AR_15_64,tot_ar=TOT_2/AR_15_64)
+
+# Quitamos los NA's
+df_indic <- df_indic[complete.cases(df_indic),]
+
+# Nos quedamos sólo con los países que nos interesan
 paises_eu = c("Austria","Belgium","Bulgaria","Croatia","Cyprus","Czech Republic","Denmark ","Estonia","Finland","France","Germany (until 1990 former territory of the FRG)","Greece","Hungary","Ireland","Italy","Latvia","Lithuania","Luxembourg","Malta","Netherlands","Poland","Portugal","Romania","Slovakia","Slovenia","Spain","Sweden","United Kingdom","Japan","United States","Switzerland")
-df <- df %>% dplyr::filter(GEO==paises_eu)
-droplevels(df)
-
-df_geo<-df %>% tidyr::spread(GEO, Value)
-df_indic<-df %>% tidyr::spread(INDIC, Value)
-
-
-
-
+df_indic_eu <- df_indic %>% 
+  dplyr::filter(GEO %in% paises_eu)
 ```
 
-# Import data
+#Graphics
+Gasto en educación sobre el PIB/Desempleo juvenil.
 ```{r}
-
+ggplot(df_indic_eu,aes(x=TIME, y=pib_yur))+
+  geom_col()+
+  facet_wrap(~GEO)+
+  scale_fill_grey(start = 0, end = 2) + theme_classic()
 ```
 
+Gasto en educación sobre el total de gasto público/ Desempleo juvenil.
+```{r}
+ggplot(df_indic_eu,aes(x=TIME, y=tot_yur))+
+  geom_col()+
+  facet_wrap(~GEO)+
+  scale_fill_grey(start = 0, end = 2) + theme_classic()
+```
+
+Gasto en educación sobre el PIB/Tasa de actividad(15-64).
+```{r}
+ggplot(df_indic_eu,aes(x=TIME, y=gdp_ar))+
+  geom_col()+
+  facet_wrap(~GEO)+
+  scale_fill_grey(start = 0, end = 2) + theme_classic()
+```
+
+Gasto en educación sobre el total de gasto público/Tasa de actividad(15-64).
+```{r}
+ggplot(df_indic_eu,aes(x=TIME, y=tot_ar))+
+  geom_col()+
+  facet_wrap(~GEO)+
+  scale_fill_grey(start = 0, end = 2) + theme_classic()
+
+
+```
+Correlación cruzada de todos los indicadores.
+```{r}
+df_indic<-df %>% tidyr::spread(INDIC, Value)
+df_indic2 <- lapply(df_indic[,3:24], as.character)
+df_indic2 <- lapply(df_indic[,3:24], as.numeric)
+df_indic2 <- as.data.frame(df_indic2)
+arm::corrplot(df_indic2)
+```
+
+No se aprecian correlaciones significativas entre los indicadores de trabajo y los indicadores de educación.
